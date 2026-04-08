@@ -25,7 +25,7 @@ This structural constraint allows the model to output a **Temporal Threat Indica
 
 ## 🏗️ Architecture
 
-![SAINT Architecture](https://via.placeholder.com/800x400.png?text=SAINT+Architecture)
+![SAINT Architecture](./fig1.png)
 *(Figure from the paper demonstrating the Modality Slicing and Attention Computation)*
 
 - **Modality Slicer:** Embeds discrete logs into dense vectors, segmented by modality.
