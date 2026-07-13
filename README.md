@@ -2,7 +2,6 @@
 
 # SAINT: Semantic Attention for Interpretable iNsider Threat Detection
 
-[![Status](https://img.shields.io/badge/Status-Under_Review-orange.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)]()
 [![Python](https://img.shields.io/badge/Python-3.10%2B-green.svg)]()
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-red.svg)]()
@@ -11,96 +10,117 @@
 
 </div>
 
-## 📖 Overview
+## Overview
 
-This repository contains the source code for **SAINT** (**S**emantic **A**ttention for **I**nterpretable **iN**sider **T**hreat Detection), a novel deep learning architecture designed to bridge the gap between high-performance anomaly detection and rigorous operational interpretability in cybersecurity.
+This repository contains the source code for **SAINT** (**S**emantic **A**ttention for **I**nterpretable **iN**sider **T**hreat Detection): a Transformer-based detector for insider threat detection that uses **Semantic Multi-Head Attention (SMA)** and a **Temporal Threat Indicator Score (TTIS)** for modality-structured explanations.
 
-While traditional deep learning models (e.g., LSTMs, Unconstrained Transformers) achieve high accuracy, they suffer from the "Black Box" problem, rendering their alerts unactionable for Security Operations Centers (SOCs). SAINT introduces **Semantic Multi-Head Attention (SMA)**, which enforces a strict 1-to-1 mapping between attention heads and specific user behavior modalities (e.g., *Login/File*, *Email*, *Web*, *Device*). 
+**Important:** This repository **does not redistribute** the CERT Insider Threat Dataset. Obtain the raw CERT r4.2 / r5.2 releases from the [CMU SEI CERT data page](https://kilthub.cmu.edu/articles/dataset/Insider_Threat_Test_Dataset/12841247) (or the official SEI distribution you are licensed for) and place them under the local layout below before running preprocessing.
 
-This structural constraint allows the model to output a **Temporal Threat Indicator Score (TTIS)** that visually reconstructs the temporal narrative of an attack—without relying on unstable post-hoc approximations like SHAP or LIME.
+## Repository layout
 
-> **Note:** This repository is currently anonymized for double-blind peer review. 
+```
+SAINT/
+├── model.py                 # SAINT architecture + SAINTLoss + create_model
+├── train.py                 # Generic training utilities
+├── requirements.txt
+├── fig1.png                 # Architecture figure
+├── SAINT_Paper.pdf          # Paper PDF (if present)
+├── data/
+│   ├── raw/                 # YOU provide: CERT r4.2/, r5.2/, answers/
+│   └── processed/           # Generated pkl tensors (gitignored)
+└── scripts/
+    ├── parse_labels.py
+    ├── preprocess_cert_v5_ultimate.py
+    ├── combine_v5_datasets.py
+    ├── train_v5.py
+    ├── search_golden_seeds.py
+    └── run_unified_experiments.py
+```
 
----
-
-## 🏗️ Architecture
-
-![SAINT Architecture](./fig1.png)
-*(Figure from the paper demonstrating the Modality Slicing and Attention Computation)*
-
-- **Modality Slicer:** Embeds discrete logs into dense vectors, segmented by modality.
-- **Semantic Attention (SMA):** Forces $Head_k$ to strictly attend to modality $M_k$, guided by a sparse binary routing matrix.
-- **Temporal Threat Indicator Score (TTIS):** Maps attention weights back to original timestamps to form a causal evidence set $E_i$ for SOC analysts.
-- **Hybrid Regularization:** Uses a focal loss objective alongside sparsity ($\mathcal{L}_{sparse}$) and divergence ($\mathcal{L}_{div}$) constraints.
-
----
-
-## 🚀 Getting Started
-
-### 1. Prerequisites
-
-- Python 3.10+
-- PyTorch 2.0+
-- NumPy, Pandas, Scikit-learn
+## Setup
 
 ```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-*(A detailed `requirements.txt` will be provided upon publication).*
+### Local data layout (not committed)
 
-### 2. File Structure
+```
+data/raw/
+  r4.2/          # logon.csv, file.csv, email.csv, device.csv, http.csv, psychometric.csv, LDAP/...
+  r5.2/
+  answers/       # insiders.csv from the CERT answers package
+data/processed/  # created by the scripts
+```
 
-- `model.py`: Core PyTorch implementation of the SAINT architecture, including the `SemanticAttention` layer and the `TTIS` extraction logic.
-- `train.py`: Training routines, complete with Focal Loss integration and Early Stopping mechanisms to prevent data leakage.
-- `SAINT_Paper.pdf`: The anonymized manuscript currently under peer review.
+## Reproduce the paper pipeline (high level)
 
-### 3. Usage Definition
+1. **Parse labels** (from CERT answers):
 
-To instantiate the model:
+```bash
+python scripts/parse_labels.py --dataset r4.2
+python scripts/parse_labels.py --dataset r5.2
+```
+
+2. **Preprocess** each release into session tensors:
+
+```bash
+python scripts/preprocess_cert_v5_ultimate.py --dataset r4.2
+python scripts/preprocess_cert_v5_ultimate.py --dataset r5.2
+```
+
+3. **Combine** r4.2 + r5.2 → `data/processed/combined_v5.pkl`:
+
+```bash
+python scripts/combine_v5_datasets.py
+```
+
+4. **Train SAINT** (stratified 80/20 window-level split, seed 42; Focal α=0.80):
+
+```bash
+python scripts/train_v5.py --data data/processed/combined_v5.pkl --output_dir results
+```
+
+5. **Optional:** golden-seed search / unified baseline metrics:
+
+```bash
+python scripts/search_golden_seeds.py
+python scripts/run_unified_experiments.py
+```
+
+## Model usage (minimal)
 
 ```python
 import torch
-from model import SAINTModel
+from model import create_model
 
-# Assuming 5 modalities: [Login, File, Device, Email, Web]
-model = SAINTModel(
-    input_dim=128, 
-    seq_len=200, 
-    num_modalities=5, 
-    d_model=256, 
-    n_heads=5, 
-    num_layers=3
+model = create_model(
+    input_dim=30,
+    config={"d_model": 256, "n_heads": 4, "n_layers": 2, "d_ff": 512, "seq_len": 30, "dropout": 0.3},
 )
-
-# Dummy input: (Batch Size, Sequence Length, Input Dim)
-x = torch.randn(32, 200, 128)
-predictions, attention_maps = model(x)
-
-# attention_maps shape: (Layer, Batch, Head, Seq_Len, Seq_Len)
-# Head 0 strictly corresponds to Modality 0 (e.g., Login)
+x = torch.randn(8, 30, 30)  # (batch, seq_len, n_features)
+out = model(x)
 ```
 
----
+## Experimental notes (as reported in the paper)
 
-## 🔬 Experimental Results
+| Item | Value |
+|---|---|
+| Combined windows | 63,647 × 30 × 30 |
+| Positive windows | 396 (0.62%) |
+| Split | stratified 80/20, seed 42, window-level |
+| Focal loss α | 0.80 |
+| Attention heads | 4 |
+| SAINT-Hybrid F1 | 91.4% (Table 3) |
 
-Evaluations on the **CERT r4.2+r5.2** synthetic dataset demonstrate that SAINT captures complex insider threats while maintaining a high F1-score. 
+Per-version detection tables and supervised cross-version transfer (train r4.2 → test r5.2 and reverse) are listed as future work in the revision.
 
-| Model | Architecture Type | Explainability | F1-Score |
-|---|---|---|---|
-| DeepTaskAPT | LSTM (Recurrent) | Opaque (Low) | ~92% |
-| UBS-Transformer | Global Attention | Requires Post-Hoc XAI | >96% |
-| **SAINT-Hybrid** | **Semantic Attention** | **Intrinsic (Direct Maps)** | **91.4%** |
+## Citation
 
-SAINT explicitly trades the final quantile of optimization for architectural transparency, reducing the analyst's verification complexity from $O(T \times F)$ down to $O(k)$. 
+*(Update after acceptance.)*
 
----
+## License
 
-## 📝 Citation
-
-*(Citation information will be updated once the peer-review process is finalized.)*
-
-## 📜 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License (see repository license file if present).
